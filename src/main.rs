@@ -1,28 +1,20 @@
-//! ```not_rust
-//! curl 127.0.0.1:7000
-//! curl -X POST 127.0.0.1:7000
-//! ```
+use std::env::{self, var};
 
 use axum::{
-    extract::{FromRef, FromRequestParts, Query, State},
+    extract::{FromRef, FromRequestParts, State},
     http::{request::Parts, StatusCode},
-    response::IntoResponse,
     routing::get,
-    Json, Router,
+    Router,
 };
-use serde::{Deserialize, Serialize};
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
-use tokio::net::TcpListener;
+use bb8::{Pool, PooledConnection};
+use bb8_postgres::PostgresConnectionManager;
+use tokio_postgres::NoTls;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use uuid::Uuid;
-
-use std::{env::var, sync::Arc, time::Duration};
 
 #[tokio::main]
 async fn main() {
     //watch out for Vulnerability dotenvy
     dotenvy::dotenv().ok();
-
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -31,28 +23,18 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // .env
-    let db_connect_options = PgConnectOptions::new()
-        .host(&var("POSTGRES_HOST").unwrap())
-        .port(
-            var("POSTGRES_PORT")
-                .unwrap()
-                .to_string()
-                .parse::<u16>()
-                .unwrap(),
-        )
-        .username(&var("POSTGRES_USER").unwrap())
-        .database(&var("POSTGRES_DB").unwrap())
-        .password(&var("POSTGRES_PASSWORD").unwrap())
-        .to_owned();
+    let config = format!(
+        "hostaddr={} port={} user={} password={} dbname={}",
+        var("POSTGRES_HOST").unwrap(),
+        var("POSTGRES_PORT").unwrap(),
+        var("POSTGRES_USER").unwrap(),
+        var("POSTGRES_PASSWORD").unwrap(),
+        var("POSTGRES_DB").unwrap(),
+    );
 
     // set up connection pool
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(3))
-        .connect_with(db_connect_options)
-        .await
-        .expect("can't connect to database");
+    let manager = PostgresConnectionManager::new_from_stringlike(config, NoTls).unwrap();
+    let pool = Pool::builder().build(manager).await.unwrap();
 
     // build our application with some routes
     let app = Router::new()
@@ -62,85 +44,60 @@ async fn main() {
         )
         .with_state(pool);
 
-    // run it with hyper
-    let listener = TcpListener::bind("127.0.0.1:7000").await.unwrap();
+    // run it
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:7000")
+        .await
+        .unwrap();
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 
-#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
-pub struct Account {
-    pub account_id: Uuid,
-    pub username: String,
-    pub pass: String,
-}
-#[derive(Debug, Deserialize, Serialize)]
-pub struct AccountResponse {
-    pub account_id: Uuid,
-    pub username: String,
-    pub pass: String,
-}
+type ConnectionPool = Pool<PostgresConnectionManager<NoTls>>;
 
-fn to_note_account(row: &Account) -> AccountResponse {
-    AccountResponse {
-        account_id: row.account_id.to_owned(),
-        username: row.username.to_owned(),
-        pass: row.pass.to_owned(),
-    }
-}
-
-// we can extract the connection pool with `State`
 async fn using_connection_pool_extractor(
-    State(pool): State<PgPool>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let row = sqlx::query_as::<_, Account>(r#"SELECT * FROM accounts"#)
-        .fetch_all(&pool)
+    State(pool): State<ConnectionPool>,
+) -> Result<String, (StatusCode, String)> {
+    let conn = pool.get().await.map_err(internal_error)?;
+
+    let row = conn
+        .query_one("select 1 + 1", &[])
         .await
         .map_err(internal_error)?;
+    let two: i32 = row.try_get(0).map_err(internal_error)?;
 
-    let accounts = row
-        .iter()
-        .map(|x| to_note_account(&x))
-        .collect::<Vec<AccountResponse>>();
-
-    println!("{:?}", &row);
-
-    let json_response = serde_json::json!({
-        "status": "200",
-        "header": "X-Custom-Foo Bar",
-        "Body": accounts
-    });
-
-    Ok(Json(json_response))
+    Ok(two.to_string())
 }
 
 // we can also write a custom extractor that grabs a connection from the pool
 // which setup is appropriate depends on your application
-struct DatabaseConnection(sqlx::pool::PoolConnection<sqlx::Postgres>);
+struct DatabaseConnection(PooledConnection<'static, PostgresConnectionManager<NoTls>>);
 
 impl<S> FromRequestParts<S> for DatabaseConnection
 where
-    PgPool: FromRef<S>,
+    ConnectionPool: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = (StatusCode, String);
 
     async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let pool = PgPool::from_ref(state);
+        let pool = ConnectionPool::from_ref(state);
 
-        let conn = pool.acquire().await.map_err(internal_error)?;
+        let conn = pool.get_owned().await.map_err(internal_error)?;
 
         Ok(Self(conn))
     }
 }
 
 async fn using_connection_extractor(
-    DatabaseConnection(mut conn): DatabaseConnection,
+    DatabaseConnection(conn): DatabaseConnection,
 ) -> Result<String, (StatusCode, String)> {
-    sqlx::query_scalar("select 'hello world from pg'")
-        .fetch_one(&mut *conn)
+    let row = conn
+        .query_one("select 1 + 1", &[])
         .await
-        .map_err(internal_error)
+        .map_err(internal_error)?;
+    let two: i32 = row.try_get(0).map_err(internal_error)?;
+
+    Ok(two.to_string())
 }
 
 /// Utility function for mapping any error into a `500 Internal Server Error`

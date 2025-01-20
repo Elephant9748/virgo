@@ -5,11 +5,13 @@ edition = "2021"
 
 [dependencies]
 axum = "0.8.1"
+bb8 = "0.9.0"
+bb8-postgres = "0.9.0"
 dotenvy = "0.15.7"
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.137"
-sqlx = { version = "0.8.3", features = ["runtime-tokio", "any", "postgres", "uuid"] }
 tokio = { version = "1.43.0", features = ["full"] }
+tokio-postgres = { version = "0.7.12", features = ["with-uuid-1", "array-impls"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 uuid = { version = "1.12.0", features = ["serde", "v4"] }
