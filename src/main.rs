@@ -18,6 +18,9 @@ use uuid::Uuid;
 
 use std::{env::var, sync::Arc, time::Duration};
 
+mod model;
+use crate::model::{to_note_account, Account, AccountResponse};
+
 #[tokio::main]
 async fn main() {
     //watch out for Vulnerability dotenvy
@@ -68,26 +71,26 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
-pub struct Account {
-    pub account_id: Uuid,
-    pub username: String,
-    pub pass: String,
-}
-#[derive(Debug, Deserialize, Serialize)]
-pub struct AccountResponse {
-    pub account_id: Uuid,
-    pub username: String,
-    pub pass: String,
-}
-
-fn to_note_account(row: &Account) -> AccountResponse {
-    AccountResponse {
-        account_id: row.account_id.to_owned(),
-        username: row.username.to_owned(),
-        pass: row.pass.to_owned(),
-    }
-}
+// #[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
+// pub struct Account {
+//     pub account_id: Uuid,
+//     pub username: String,
+//     pub pass: String,
+// }
+// #[derive(Debug, Deserialize, Serialize)]
+// pub struct AccountResponse {
+//     pub account_id: Uuid,
+//     pub username: String,
+//     pub pass: String,
+// }
+//
+// fn to_note_account(row: &Account) -> AccountResponse {
+//     AccountResponse {
+//         account_id: row.account_id.to_owned(),
+//         username: row.username.to_owned(),
+//         pass: row.pass.to_owned(),
+//     }
+// }
 
 // we can extract the connection pool with `State`
 async fn using_connection_pool_extractor(
