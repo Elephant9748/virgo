@@ -4,16 +4,19 @@
 //! ```
 
 use axum::{
-    extract::{FromRef, FromRequestParts, State},
+    extract::{FromRef, FromRequestParts, Query, State},
     http::{request::Parts, StatusCode},
+    response::IntoResponse,
     routing::get,
-    Router,
+    Json, Router,
 };
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
-use std::{env::var, time::Duration};
+use std::{env::var, sync::Arc, time::Duration};
 
 #[tokio::main]
 async fn main() {
@@ -65,14 +68,50 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+#[derive(Debug, Deserialize, Serialize, sqlx::FromRow)]
+pub struct Account {
+    pub account_id: Uuid,
+    pub username: String,
+    pub pass: String,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AccountResponse {
+    pub account_id: Uuid,
+    pub username: String,
+    pub pass: String,
+}
+
+fn to_note_account(row: &Account) -> AccountResponse {
+    AccountResponse {
+        account_id: row.account_id.to_owned(),
+        username: row.username.to_owned(),
+        pass: row.pass.to_owned(),
+    }
+}
+
 // we can extract the connection pool with `State`
 async fn using_connection_pool_extractor(
     State(pool): State<PgPool>,
-) -> Result<String, (StatusCode, String)> {
-    sqlx::query_scalar("select 'hello world from pg'")
-        .fetch_one(&pool)
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let row = sqlx::query_as::<_, Account>(r#"SELECT * FROM accounts"#)
+        .fetch_all(&pool)
         .await
-        .map_err(internal_error)
+        .map_err(internal_error)?;
+
+    let accounts = row
+        .iter()
+        .map(|x| to_note_account(&x))
+        .collect::<Vec<AccountResponse>>();
+
+    println!("{:?}", &row);
+
+    let json_response = serde_json::json!({
+        "status": "200",
+        "header": "X-Custom-Foo Bar",
+        "Body": accounts
+    });
+
+    Ok(Json(json_response))
 }
 
 // we can also write a custom extractor that grabs a connection from the pool
