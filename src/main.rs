@@ -1,15 +1,19 @@
-use std::env::{self, var};
+use std::env::var;
 
 use axum::{
     extract::{FromRef, FromRequestParts, State},
     http::{request::Parts, StatusCode},
+    response::IntoResponse,
     routing::get,
-    Router,
+    Json, Router,
 };
 use bb8::{Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+mod model;
+use crate::model::Account;
 
 #[tokio::main]
 async fn main() {
@@ -56,16 +60,27 @@ type ConnectionPool = Pool<PostgresConnectionManager<NoTls>>;
 
 async fn using_connection_pool_extractor(
     State(pool): State<ConnectionPool>,
-) -> Result<String, (StatusCode, String)> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     let conn = pool.get().await.map_err(internal_error)?;
 
     let row = conn
-        .query_one("select 1 + 1", &[])
+        .query("select * from accounts", &[])
         .await
         .map_err(internal_error)?;
-    let two: i32 = row.try_get(0).map_err(internal_error)?;
 
-    Ok(two.to_string())
+    let result: Vec<Account> = row.into_iter().map(|v| Account::new(v)).collect();
+
+    let accounts_json = serde_json::to_string_pretty(&result);
+
+    println!("{:?}", accounts_json.unwrap());
+
+    let json_account = serde_json::json!({
+        "status": "tbd",
+        "header": "tbd",
+        "body" : &result
+    });
+
+    Ok(Json(json_account))
 }
 
 // we can also write a custom extractor that grabs a connection from the pool
