@@ -1163,6 +1163,7 @@ dependencies = [
  "bb8",
  "bb8-postgres",
  "dotenvy",
+ "futures-util",
  "serde",
  "serde_json",
  "tokio",

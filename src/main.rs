@@ -1,19 +1,20 @@
 use std::env::var;
 
 use axum::{
-    extract::{FromRef, FromRequestParts, State},
-    http::{request::Parts, StatusCode},
-    response::IntoResponse,
-    routing::get,
-    Json, Router,
+    routing::{delete, get, post},
+    Router,
 };
-use bb8::{Pool, PooledConnection};
+use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod model;
-use crate::model::Account;
+mod query;
+use crate::{
+    model::Account,
+    query::{delete_accounts, get_accounts, insert_accounts},
+};
 
 #[tokio::main]
 async fn main() {
@@ -44,8 +45,12 @@ async fn main() {
     let app = Router::new()
         .route(
             "/",
-            get(using_connection_pool_extractor).post(using_connection_extractor),
+            get(get_accounts)
+                .post(insert_accounts)
+                .delete(delete_accounts),
         )
+        .route("/acc/add", post(insert_accounts))
+        .route("/acc/del", delete(delete_accounts))
         .with_state(pool);
 
     // run it
@@ -54,72 +59,4 @@ async fn main() {
         .unwrap();
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
-}
-
-type ConnectionPool = Pool<PostgresConnectionManager<NoTls>>;
-
-async fn using_connection_pool_extractor(
-    State(pool): State<ConnectionPool>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let conn = pool.get().await.map_err(internal_error)?;
-
-    let row = conn
-        .query("select * from accounts", &[])
-        .await
-        .map_err(internal_error)?;
-
-    let result: Vec<Account> = row.into_iter().map(|v| Account::new(v)).collect();
-
-    let accounts_json = serde_json::to_string_pretty(&result);
-
-    println!("{:?}", accounts_json.unwrap());
-
-    let json_account = serde_json::json!({
-        "status": "tbd",
-        "header": "tbd",
-        "body" : &result
-    });
-
-    Ok(Json(json_account))
-}
-
-// we can also write a custom extractor that grabs a connection from the pool
-// which setup is appropriate depends on your application
-struct DatabaseConnection(PooledConnection<'static, PostgresConnectionManager<NoTls>>);
-
-impl<S> FromRequestParts<S> for DatabaseConnection
-where
-    ConnectionPool: FromRef<S>,
-    S: Send + Sync,
-{
-    type Rejection = (StatusCode, String);
-
-    async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let pool = ConnectionPool::from_ref(state);
-
-        let conn = pool.get_owned().await.map_err(internal_error)?;
-
-        Ok(Self(conn))
-    }
-}
-
-async fn using_connection_extractor(
-    DatabaseConnection(conn): DatabaseConnection,
-) -> Result<String, (StatusCode, String)> {
-    let row = conn
-        .query_one("select 1 + 1", &[])
-        .await
-        .map_err(internal_error)?;
-    let two: i32 = row.try_get(0).map_err(internal_error)?;
-
-    Ok(two.to_string())
-}
-
-/// Utility function for mapping any error into a `500 Internal Server Error`
-/// response.
-fn internal_error<E>(err: E) -> (StatusCode, String)
-where
-    E: std::error::Error,
-{
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }

@@ -9,8 +9,19 @@ pub struct Account {
     pub pass: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ParamsAccount {
+    pub username: String,
+    pub pass: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ParamsAccountUsername {
+    pub username: String,
+}
+
 impl Account {
-    pub fn new(col: Row) -> Self {
+    pub fn from_row(col: Row) -> Self {
         Self {
             account_id: col.get("account_id"),
             username: col.get("username"),
