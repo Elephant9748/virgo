@@ -1,0 +1,3 @@
+#!/bin/bash
+
+curl -H 'Content-Type: application/json' -d '{"client_id":"virgo","client_secret":"pass"}' -X POST http://localhost:7000/login | jq '.access_token'

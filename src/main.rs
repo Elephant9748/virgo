@@ -1,4 +1,8 @@
-use std::env::var;
+mod auth;
+mod model;
+mod query;
+
+use std::{env::var, sync::LazyLock};
 
 use axum::{
     routing::{delete, get, post},
@@ -9,12 +13,16 @@ use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod model;
-mod query;
 use crate::{
+    auth::{authorize_login, protected, Keys},
     model::Account,
     query::{delete_accounts, get_accounts, insert_accounts},
 };
+
+pub static KEYS: LazyLock<Keys> = LazyLock::new(|| {
+    let secret_key = var("SECRET_KEY").expect("SECRET_KEY must be set");
+    Keys::new(secret_key.as_bytes())
+});
 
 #[tokio::main]
 async fn main() {
@@ -51,6 +59,8 @@ async fn main() {
         )
         .route("/acc/add", post(insert_accounts))
         .route("/acc/del", delete(delete_accounts))
+        .route("/locker", get(protected))
+        .route("/login", post(authorize_login))
         .with_state(pool);
 
     // run it
