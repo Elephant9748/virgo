@@ -1,0 +1,5 @@
+#!/bin/bash
+
+read -p "Authorization: Bearer : " auth
+
+eval "curl -H 'Content-Type: application/json' -H 'Authorization: Bearer $auth' -X GET http://localhost:7000/ | jq '.'"

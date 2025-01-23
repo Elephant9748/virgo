@@ -1,8 +1,9 @@
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, Request},
     http::{request::Parts, StatusCode},
+    middleware::Next,
     response::{IntoResponse, Response},
-    Json, RequestPartsExt,
+    Extension, Json, RequestPartsExt,
 };
 use axum_extra::{
     headers::{authorization::Bearer, Authorization},
@@ -45,10 +46,10 @@ impl AuthBody {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AuthPayload {
-    client_id: String,
-    client_secret: String,
+    pub client_id: String,
+    pub client_secret: String,
 }
 
 #[derive(Debug)]
@@ -57,6 +58,8 @@ pub enum AuthError {
     MissingCredentials,
     TokenCreation,
     InvalidToken,
+    InternalError,
+    MissingToken,
 }
 
 impl IntoResponse for AuthError {
@@ -66,8 +69,11 @@ impl IntoResponse for AuthError {
             AuthError::MissingCredentials => (StatusCode::BAD_REQUEST, "Missing credentials"),
             AuthError::TokenCreation => (StatusCode::INTERNAL_SERVER_ERROR, "Token creation error"),
             AuthError::InvalidToken => (StatusCode::BAD_REQUEST, "Invalid token"),
+            AuthError::InternalError => (StatusCode::BAD_REQUEST, "Bad Request"),
+            AuthError::MissingToken => (StatusCode::BAD_REQUEST, "Misding token"),
         };
         let body = Json(json!({
+            "message": "Oops!",
             "error": error_message,
         }));
         (status, body).into_response()
@@ -91,6 +97,7 @@ impl Display for Claims {
     }
 }
 
+// auth jwt & access db
 impl<S> FromRequestParts<S> for Claims
 where
     S: Send + Sync,
@@ -113,9 +120,8 @@ where
     }
 }
 
-pub async fn authorize_login(
-    Json(payload): Json<AuthPayload>,
-) -> Result<Json<AuthBody>, AuthError> {
+// todo! need to grap from db
+pub async fn create_token(Json(payload): Json<AuthPayload>) -> Result<Json<AuthBody>, AuthError> {
     if payload.client_id.is_empty() || payload.client_secret.is_empty() {
         return Err(AuthError::MissingCredentials);
     }
@@ -126,7 +132,9 @@ pub async fn authorize_login(
     let claims = Claims {
         authorization: true,
         data: "your can access your data now!".to_owned(),
+        // !todo better exp time
         exp: 2000000000,
+        // exp: 2000000,
     };
 
     // create token
@@ -137,6 +145,22 @@ pub async fn authorize_login(
     Ok(Json(AuthBody::new(jwt_token)))
 }
 
+pub async fn auth_middleware(req: Request, next: Next) -> Result<impl IntoResponse, AuthError> {
+    let auth_header = req.headers().get("Authorization");
+    if let Some(auth_header) = auth_header {
+        let token = auth_header.to_str().unwrap_or_default();
+        let token = token.strip_prefix("Bearer ").unwrap_or_default();
+        let token_data = decode::<Claims>(token, &KEYS.decod, &Validation::default())
+            .map_err(|_| AuthError::InvalidToken)?;
+        println!("{:?}", token_data);
+        // Pass the request to the next handler
+        Ok(next.run(req).await)
+    } else {
+        // Return an error response if the token is missing
+        Err(AuthError::MissingToken)
+    }
+}
+
 pub async fn protected(claims: Claims) -> Result<impl IntoResponse, AuthError> {
     let response = serde_json::json!({
         "message": "Welcome to protected area :)",
@@ -144,4 +168,12 @@ pub async fn protected(claims: Claims) -> Result<impl IntoResponse, AuthError> {
     });
 
     Ok(Json(response))
+}
+
+#[allow(dead_code)]
+pub async fn user_token(Extension(authpayload): Extension<AuthPayload>) -> impl IntoResponse {
+    Json(AuthPayload {
+        client_id: authpayload.client_id,
+        client_secret: authpayload.client_secret,
+    })
 }

@@ -1,4 +1,5 @@
 use crate::{
+    auth::AuthError,
     model::{ParamsAccount, ParamsAccountUsername},
     Account,
 };
@@ -16,13 +17,13 @@ pub type ConnectionPool = Pool<PostgresConnectionManager<NoTls>>;
 
 pub async fn get_accounts(
     State(pool): State<ConnectionPool>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let conn = pool.get().await.map_err(internal_error)?;
+) -> Result<impl IntoResponse, AuthError> {
+    let conn = pool.get().await.map_err(|_| AuthError::InternalError)?;
 
     let row = conn
         .query("select * from accounts", &[])
         .await
-        .map_err(internal_error)?;
+        .map_err(|_| AuthError::InternalError)?;
 
     let result: Vec<Account> = row.into_iter().map(|v| Account::from_row(v)).collect();
 
@@ -31,8 +32,7 @@ pub async fn get_accounts(
     println!("{:?}", accounts_json.unwrap());
 
     let json_account = serde_json::json!({
-        "status": "tbd",
-        "header": "tbd",
+        "status": StatusCode::OK.to_string(),
         "body" : &result
     });
 
@@ -74,8 +74,7 @@ pub async fn insert_accounts(
     println!("{:?}", accounts_json.unwrap());
 
     let json_account = serde_json::json!({
-        "status": "tbd",
-        "header": "tbd",
+        "status": StatusCode::OK.to_string(),
         "body" : {
             "insert": (addresult.is_empty()).then(|| "ok" ),
             "select": queryresult,
@@ -109,8 +108,7 @@ pub async fn delete_accounts(
     println!("{:?}", accounts_json.unwrap());
 
     let json_account = serde_json::json!({
-        "status": "tbd",
-        "header": "tbd",
+        "status": StatusCode::OK.to_string(),
         "body" : {
             "delete": deleteresult,
         }
@@ -159,4 +157,12 @@ where
     E: std::error::Error,
 {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+}
+
+#[allow(dead_code)]
+fn header_error<E>(err: E) -> (StatusCode, String)
+where
+    E: std::error::Error,
+{
+    (StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE, err.to_string())
 }

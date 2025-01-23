@@ -5,20 +5,24 @@ mod query;
 use std::{env::var, sync::LazyLock};
 
 use axum::{
+    http::Method,
+    middleware,
     routing::{delete, get, post},
     Router,
 };
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    auth::{authorize_login, protected, Keys},
+    auth::{auth_middleware, create_token, protected, Keys},
     model::Account,
     query::{delete_accounts, get_accounts, insert_accounts},
 };
 
+// secret keys jwt
 pub static KEYS: LazyLock<Keys> = LazyLock::new(|| {
     let secret_key = var("SECRET_KEY").expect("SECRET_KEY must be set");
     Keys::new(secret_key.as_bytes())
@@ -49,6 +53,11 @@ async fn main() {
     let manager = PostgresConnectionManager::new_from_stringlike(config, NoTls).unwrap();
     let pool = Pool::builder().build(manager).await.unwrap();
 
+    // cors
+    let cors = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_origin(Any);
+
     // build our application with some routes
     let app = Router::new()
         .route(
@@ -60,7 +69,9 @@ async fn main() {
         .route("/acc/add", post(insert_accounts))
         .route("/acc/del", delete(delete_accounts))
         .route("/locker", get(protected))
-        .route("/login", post(authorize_login))
+        .layer(middleware::from_fn(auth_middleware))
+        .route("/createtoken", post(create_token))
+        .layer(cors)
         .with_state(pool);
 
     // run it
