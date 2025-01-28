@@ -1,4 +1,9 @@
 #!/bin/bash
 
-curl -H 'Content-Type: application/json' -d '{"username":"paris","pass":"paris"}' -X POST http://localhost:7000/signin | jq '.'
-# curl -H 'Content-Type: application/json' -d '{"username":"alan_empty","pass":"alan.password"}' -X POST http://localhost:7000/signin | jq '.'
+read -p "Authorization: Bearer : " auth
+echo
+echo "createtoken jwt /signin"
+read -p "Username : " username
+read -p "pass : " pass
+
+eval "curl -d '{\"username\": \"$username\",\"pass\": \"$pss\"}' -H 'Content-Type: application/json' -H 'Authorization: Bearer $auth' -X POST http://localhost:7000/signin | jq '.'"
