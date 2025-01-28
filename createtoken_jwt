@@ -1,9 +1,16 @@
 #!/bin/bash
 
+<<<<<<< HEAD
 read -p "Authorization: Bearer : " auth
 echo
+=======
+>>>>>>> virgo-tokio-postgres
 echo "createtoken jwt /signin"
 read -p "Username : " username
 read -p "pass : " pass
 
+<<<<<<< HEAD
 eval "curl -d '{\"username\": \"$username\",\"pass\": \"$pss\"}' -H 'Content-Type: application/json' -H 'Authorization: Bearer $auth' -X POST http://localhost:7000/signin | jq '.'"
+=======
+eval "curl -d '{\"username\": \"$username\",\"pass\": \"$pass\"}' -H 'Content-Type: application/json' -X POST http://localhost:7000/signin | jq '.'"
+>>>>>>> virgo-tokio-postgres
