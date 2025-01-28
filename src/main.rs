@@ -2,8 +2,6 @@ mod auth;
 mod model;
 mod query;
 
-use std::{env::var, sync::LazyLock};
-
 use axum::{
     http::Method,
     middleware,
@@ -12,12 +10,13 @@ use axum::{
 };
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
+use std::{env::var, sync::LazyLock};
 use tokio_postgres::NoTls;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    auth::{auth_middleware, create_token, protected, sign_in, Keys},
+    auth::{auth_middleware, create_token, protected, sign_in, sign_in_using_path, Keys},
     model::Account,
     query::{delete_accounts, get_accounts, insert_accounts},
 };
@@ -72,6 +71,7 @@ async fn main() {
         .layer(middleware::from_fn(auth_middleware))
         .route("/createtoken", post(create_token))
         .route("/signin", post(sign_in))
+        .route("/signin/{username}/{pass}", get(sign_in_using_path))
         .layer(cors)
         .with_state(pool);
 

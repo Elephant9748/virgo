@@ -11,6 +11,7 @@ use axum::{
 };
 use bb8::{Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
+use bcrypt::hash;
 use tokio_postgres::NoTls;
 
 pub type ConnectionPool = Pool<PostgresConnectionManager<NoTls>>;
@@ -27,15 +28,12 @@ pub async fn get_accounts(
 
     let result: Vec<Account> = row.into_iter().map(|v| Account::from_row(v)).collect();
 
-    let accounts_json = serde_json::to_string_pretty(&result);
-
-    println!("{:?}", accounts_json.unwrap());
-
     let json_account = serde_json::json!({
         "status": StatusCode::OK.to_string(),
         "body" : &result
     });
 
+    tracing::info!("/acc success!: {:?}", result);
     Ok(Json(json_account))
 }
 
@@ -45,12 +43,15 @@ pub async fn insert_accounts(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let conn = pool.get().await.map_err(internal_error)?;
 
+    //hashing pasword
+    let hash_pass = hash(&params.pass, 15).unwrap().to_string();
+
     let add = conn
         .query(
             "
             insert into accounts (username,pass) values ($1,$2);
             ",
-            &[&params.username, &params.pass],
+            &[&params.username, &hash_pass],
         )
         .await
         .map_err(internal_error)?;
@@ -68,11 +69,6 @@ pub async fn insert_accounts(
     let addresult: Vec<Account> = add.into_iter().map(|v| Account::from_row(v)).collect();
     let queryresult: Vec<Account> = query.into_iter().map(|v| Account::from_row(v)).collect();
 
-    let accounts_json = serde_json::to_string_pretty(&queryresult);
-
-    println!("{:?}", &params);
-    println!("{:?}", accounts_json.unwrap());
-
     let json_account = serde_json::json!({
         "status": StatusCode::OK.to_string(),
         "body" : {
@@ -81,6 +77,7 @@ pub async fn insert_accounts(
         }
     });
 
+    tracing::info!("/add/acc success!: {:?}", queryresult);
     Ok(Json(json_account))
 }
 
@@ -102,11 +99,6 @@ pub async fn delete_accounts(
 
     let deleteresult: Vec<Account> = delete.into_iter().map(|v| Account::from_row(v)).collect();
 
-    let accounts_json = serde_json::to_string_pretty(&deleteresult);
-
-    println!("{:?}", &params);
-    println!("{:?}", accounts_json.unwrap());
-
     let json_account = serde_json::json!({
         "status": StatusCode::OK.to_string(),
         "body" : {
@@ -114,6 +106,7 @@ pub async fn delete_accounts(
         }
     });
 
+    tracing::info!("/add/del success!: {:?}", deleteresult);
     Ok(Json(json_account))
 }
 

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+read -p "Authorization: Bearer : " auth
+echo
+echo "Delete accounts!"
+read -p "By Username : " username
+
+eval "curl -d '{\"username\": \"$username\"}' -H 'Content-Type: application/json' -H 'Authorization: Bearer $auth' -X DELETE http://localhost:7000/acc/del | jq '.'"
+

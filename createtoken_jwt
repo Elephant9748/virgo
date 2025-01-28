@@ -1,4 +1,4 @@
 #!/bin/bash
 
-curl -H 'Content-Type: application/json' -d '{"username":"alan","pass":"alan.password"}' -X POST http://localhost:7000/signin | jq '.'
+curl -H 'Content-Type: application/json' -d '{"username":"paris","pass":"paris"}' -X POST http://localhost:7000/signin | jq '.'
 # curl -H 'Content-Type: application/json' -d '{"username":"alan_empty","pass":"alan.password"}' -X POST http://localhost:7000/signin | jq '.'

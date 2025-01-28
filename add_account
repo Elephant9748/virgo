@@ -1,0 +1,9 @@
+#!/bin/bash
+
+read -p "Authorization: Bearer : " auth
+echo
+echo "Insert account Username,pass!"
+read -p "Username: " username
+read -p "Password: " pass
+
+eval "curl -d'{\"username\":\"$username\", \"pass\":\"$pass\"}' -H 'Content-Type: application/json' -H 'Authorization: Bearer $auth' -X POST http://localhost:7000/acc/add | jq '.'"
