@@ -1,3 +1,4 @@
 #!/bin/bash
 
-curl -H 'Content-Type: application/json' -d '{"client_id":"virgo","client_secret":"pass"}' -X POST http://localhost:7000/createtoken | jq '.access_token'
+curl -H 'Content-Type: application/json' -d '{"username":"alan","pass":"alan.password"}' -X POST http://localhost:7000/signin | jq '.'
+# curl -H 'Content-Type: application/json' -d '{"username":"alan_empty","pass":"alan.password"}' -X POST http://localhost:7000/signin | jq '.'

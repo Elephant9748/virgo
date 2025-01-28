@@ -1,5 +1,5 @@
 use axum::{
-    extract::{FromRequestParts, Request},
+    extract::{FromRequestParts, Request, State},
     http::{request::Parts, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -15,7 +15,11 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::KEYS;
+use crate::{
+    model::{Account, ParamsAccount},
+    query::ConnectionPool,
+    KEYS,
+};
 
 pub struct Keys {
     pub encod: EncodingKey,
@@ -118,6 +122,50 @@ where
 
         Ok(token_data.claims)
     }
+}
+// todo! need to grap from db
+pub async fn sign_in(
+    State(pool): State<ConnectionPool>,
+    Json(payload): Json<ParamsAccount>,
+) -> Result<Json<AuthBody>, AuthError> {
+    let conn = pool.get().await.map_err(|_| AuthError::InternalError)?;
+    let query = conn
+        .query(
+            "select * from accounts where username = $1",
+            &[&payload.username],
+        )
+        .await
+        .map_err(|_| AuthError::InternalError)?;
+    let account_from_query: Vec<Account> =
+        query.into_iter().map(|a| Account::from_row(a)).collect();
+
+    if account_from_query.is_empty() {
+        return Err(AuthError::InternalError);
+    }
+
+    if payload.username.is_empty() || payload.pass.is_empty() {
+        return Err(AuthError::MissingCredentials);
+    }
+    if payload.username != account_from_query[0].username
+        || payload.pass != account_from_query[0].pass
+    {
+        return Err(AuthError::WrongCredentials);
+    }
+
+    let claims = Claims {
+        authorization: true,
+        data: "your can access your data now!".to_owned(),
+        // !todo better exp time
+        exp: 2000000000,
+        // exp: 2000000,
+    };
+
+    // create token
+    let jwt_token =
+        encode(&Header::default(), &claims, &KEYS.encod).map_err(|_| AuthError::TokenCreation)?;
+
+    // send auth token
+    Ok(Json(AuthBody::new(jwt_token)))
 }
 
 // todo! need to grap from db

@@ -17,7 +17,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    auth::{auth_middleware, create_token, protected, Keys},
+    auth::{auth_middleware, create_token, protected, sign_in, Keys},
     model::Account,
     query::{delete_accounts, get_accounts, insert_accounts},
 };
@@ -71,6 +71,7 @@ async fn main() {
         .route("/locker", get(protected))
         .layer(middleware::from_fn(auth_middleware))
         .route("/createtoken", post(create_token))
+        .route("/signin", post(sign_in))
         .layer(cors)
         .with_state(pool);
 
