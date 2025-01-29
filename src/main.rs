@@ -10,6 +10,7 @@ use axum::{
 };
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
+use query::{delete_accounts_extractor, get_accounts_extractor, insert_accounts_extractor};
 use std::{env::var, sync::LazyLock};
 use tokio_postgres::NoTls;
 use tower_http::cors::{Any, CorsLayer};
@@ -59,19 +60,37 @@ async fn main() {
 
     // build our application with some routes
     let app = Router::new()
+        // using connection pool extractor
+        // =======================================
         .route(
             "/",
+            get(get_accounts_extractor)
+                .post(insert_accounts_extractor)
+                .delete(delete_accounts_extractor),
+        )
+        .route("/acc/add", post(insert_accounts))
+        .route("/acc/del", delete(delete_accounts))
+        // =======================================
+        //
+        // using connection extractor
+        // ---------------------------------------
+        .route(
+            "/accounts",
             get(get_accounts)
                 .post(insert_accounts)
                 .delete(delete_accounts),
         )
-        .route("/acc/add", post(insert_accounts))
-        .route("/acc/del", delete(delete_accounts))
+        .route("/acc/insert", post(insert_accounts))
+        .route("/acc/delete", delete(delete_accounts))
+        // ---------------------------------------
         .route("/locker", get(protected))
         .layer(middleware::from_fn(auth_middleware))
+        // using connection pool extractor
+        // =======================================
         .route("/createtoken", post(create_token))
         .route("/signin", post(sign_in))
         .route("/signin/{username}/{pass}", get(sign_in_using_path))
+        // =======================================
         .layer(cors)
         .with_state(pool);
 
