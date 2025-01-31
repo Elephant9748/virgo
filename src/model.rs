@@ -1,3 +1,4 @@
+use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::Row;
 use uuid::Uuid;
@@ -13,6 +14,13 @@ pub struct Account {
 pub struct ParamsAccount {
     pub username: String,
     pub pass: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ParamsAccountWithUA {
+    pub username: String,
+    pub pass: String,
+    pub useragent: Bytes,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

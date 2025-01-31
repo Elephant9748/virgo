@@ -2,9 +2,14 @@ mod auth;
 mod model;
 mod query;
 
+use async_graphql::{
+    connection::EmptyFields, http::GraphiQLSource, EmptyMutation, EmptySubscription, Schema,
+};
+use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
     http::Method,
     middleware,
+    response::{self, IntoResponse},
     routing::{delete, get, post},
     Router,
 };
@@ -27,6 +32,22 @@ pub static KEYS: LazyLock<Keys> = LazyLock::new(|| {
     let secret_key = var("SECRET_KEY").expect("SECRET_KEY must be set");
     Keys::new(secret_key.as_bytes())
 });
+
+// graphql handler
+pub async fn graphqlhandler() -> impl IntoResponse {
+    response::Html(
+        GraphiQLSource::build()
+            .endpoint("/graphql")
+            .subscription_endpoint("/ws")
+            .finish(),
+    )
+}
+
+//shared_state
+#[derive(Clone)]
+pub struct AppState {
+    pub useragent: String,
+}
 
 #[tokio::main]
 async fn main() {
@@ -52,6 +73,10 @@ async fn main() {
     // set up connection pool
     let manager = PostgresConnectionManager::new_from_stringlike(config, NoTls).unwrap();
     let pool = Pool::builder().build(manager).await.unwrap();
+
+    //graphql schema
+    // doesnt have scheme properly yet
+    let schema = Schema::build(EmptyFields, EmptyMutation, EmptySubscription).finish();
 
     // cors
     let cors = CorsLayer::new()
@@ -91,6 +116,11 @@ async fn main() {
         .route("/signin", post(sign_in))
         .route("/signin/{username}/{pass}", get(sign_in_using_path))
         // =======================================
+        .route(
+            "/graphql",
+            get(graphqlhandler).post_service(GraphQL::new(schema.clone())),
+        )
+        .route_service("/ws", GraphQLSubscription::new(schema))
         .layer(cors)
         .with_state(pool);
 
