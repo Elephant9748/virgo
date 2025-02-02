@@ -1,10 +1,9 @@
 mod auth;
+mod graphql;
 mod model;
 mod query;
 
-use async_graphql::{
-    connection::EmptyFields, http::GraphiQLSource, EmptyMutation, EmptySubscription, Schema,
-};
+use async_graphql::{http::GraphiQLSource, EmptySubscription, Schema};
 use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
     http::Method,
@@ -15,7 +14,6 @@ use axum::{
 };
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
-use query::{delete_accounts_extractor, get_accounts_extractor, insert_accounts_extractor};
 use std::{env::var, sync::LazyLock};
 use tokio_postgres::NoTls;
 use tower_http::cors::{Any, CorsLayer};
@@ -23,8 +21,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     auth::{auth_middleware, create_token, protected, sign_in, sign_in_using_path, Keys},
+    graphql::{MutationRoot, QueryRoot},
     model::Account,
-    query::{delete_accounts, get_accounts, insert_accounts},
+    query::{
+        delete_accounts, delete_accounts_extractor, get_accounts, get_accounts_extractor,
+        insert_accounts, insert_accounts_extractor,
+    },
 };
 
 // secret keys jwt
@@ -32,6 +34,12 @@ pub static KEYS: LazyLock<Keys> = LazyLock::new(|| {
     let secret_key = var("SECRET_KEY").expect("SECRET_KEY must be set");
     Keys::new(secret_key.as_bytes())
 });
+
+//shared_state
+#[derive(Clone)]
+pub struct AppState {
+    pub useragent: String,
+}
 
 // graphql handler
 pub async fn graphqlhandler() -> impl IntoResponse {
@@ -41,12 +49,6 @@ pub async fn graphqlhandler() -> impl IntoResponse {
             .subscription_endpoint("/ws")
             .finish(),
     )
-}
-
-//shared_state
-#[derive(Clone)]
-pub struct AppState {
-    pub useragent: String,
 }
 
 #[tokio::main]
@@ -76,7 +78,9 @@ async fn main() {
 
     //graphql schema
     // doesnt have scheme properly yet
-    let schema = Schema::build(EmptyFields, EmptyMutation, EmptySubscription).finish();
+    let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+        .data(pool.clone())
+        .finish();
 
     // cors
     let cors = CorsLayer::new()
