@@ -35,12 +35,6 @@ pub static KEYS: LazyLock<Keys> = LazyLock::new(|| {
     Keys::new(secret_key.as_bytes())
 });
 
-//shared_state
-#[derive(Clone)]
-pub struct AppState {
-    pub useragent: String,
-}
-
 // graphql handler
 pub async fn graphqlhandler() -> impl IntoResponse {
     response::Html(

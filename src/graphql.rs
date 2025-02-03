@@ -1,8 +1,9 @@
-use async_graphql::{Context, Error, Guard, Object};
-use bcrypt::hash;
+use async_graphql::{Context, Error, Object};
+use bcrypt::{hash, verify};
+use jsonwebtoken::{encode, Header};
 use uuid::Uuid;
 
-use crate::{model::Account, query::ConnectionPool};
+use crate::{auth::Claims, model::Account, query::ConnectionPool, KEYS};
 
 #[Object]
 impl Account {
@@ -31,12 +32,60 @@ impl QueryRoot {
         }
         Ok(graphql_data)
     }
+    async fn greet(&self, ctx: &Context<'_>) -> String {
+        let head = ctx.http_header_contains("Authorization");
+        tracing::debug!("{:?}", head);
+
+        String::from("OK".to_string())
+    }
 }
 
 pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
+    async fn login(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        pass: String,
+    ) -> Result<String, Error> {
+        let head = ctx.http_header_contains("Authorization");
+        tracing::debug!("{:?}", head);
+        let conn = ctx.data_unchecked::<ConnectionPool>();
+        let db = conn.get().await.unwrap();
+        let row = db
+            .query("select * from accounts where username = $1", &[&username])
+            .await
+            .unwrap();
+        let graphql_data: Vec<Account> = row.into_iter().map(|x| Account::from_row(x)).collect();
+
+        if username.is_empty() || pass.is_empty() {
+            return Err(Error::new("username or pass is empty !"));
+        }
+
+        let hash_verify_pass = verify(&pass, graphql_data[0].pass.as_str()).unwrap();
+
+        if username != graphql_data[0].username || hash_verify_pass == false {
+            return Err(Error::new("wrong credentials !"));
+        }
+
+        let claims = Claims {
+            authorization: true,
+            data: "your can access your data now!".to_owned(),
+            // !todo better exp time
+            exp: 2000000000,
+            // exp: 2000000,
+        };
+
+        //create token
+        let jwt_token = encode(&Header::default(), &claims, &KEYS.encod).unwrap();
+
+        tracing::debug!("{}-token: {:?}", username, jwt_token);
+
+        Ok(jwt_token.into())
+    }
+
     async fn insert_accounts(
         &self,
         ctx: &Context<'_>,
@@ -91,34 +140,5 @@ impl MutationRoot {
 
         tracing::debug!("{:?}", graphql_data);
         Ok(true)
-    }
-}
-
-// Field guard
-#[derive(Eq, PartialEq, Copy, Clone)]
-#[allow(dead_code)]
-pub enum Role {
-    Root,
-    Rigel,
-}
-
-pub struct RoleGuard {
-    role: Role,
-}
-
-#[allow(dead_code)]
-impl RoleGuard {
-    fn new(role: Role) -> Self {
-        Self { role }
-    }
-}
-
-impl Guard for RoleGuard {
-    async fn check(&self, ctx: &Context<'_>) -> Result<(), Error> {
-        if ctx.data_opt::<Role>() == Some(&self.role) {
-            Ok(())
-        } else {
-            Err(Error::new("Doesnt have any role!"))
-        }
     }
 }
