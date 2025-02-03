@@ -1,6 +1,6 @@
 use axum::{
     extract::{FromRequestParts, Path, Request, State},
-    http::{request::Parts, StatusCode},
+    http::{request::Parts, HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Extension, Json, RequestPartsExt,
@@ -87,9 +87,9 @@ impl IntoResponse for AuthError {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    authorization: bool,
-    data: String,
-    exp: usize,
+    pub authorization: bool,
+    pub data: String,
+    pub exp: usize,
 }
 
 impl Display for Claims {
@@ -102,7 +102,7 @@ impl Display for Claims {
     }
 }
 
-// auth jwt & access db
+// auth jwt & access db from claims
 impl<S> FromRequestParts<S> for Claims
 where
     S: Send + Sync,
@@ -119,7 +119,7 @@ where
         let token_data = decode::<Claims>(bearer.token(), &KEYS.decod, &Validation::default())
             .map_err(|_| AuthError::InvalidToken)?;
 
-        tracing::info!("{:?}", token_data);
+        // tracing::info!("{:?}", token_data);
 
         Ok(token_data.claims)
     }
@@ -131,6 +131,7 @@ pub async fn sign_in_using_path(
     State(pool): State<ConnectionPool>,
     req: Request,
 ) -> Result<Json<AuthBody>, AuthError> {
+    tracing::debug!("req: {:?}", req);
     let conn = pool.get().await.map_err(|_| AuthError::InternalError)?;
     let query = conn
         .query("select * from accounts where username = $1", &[&username])
@@ -200,9 +201,10 @@ pub async fn sign_in_using_path(
 
 // todo!()  set proper claims, exp
 pub async fn sign_in(
+    headers: HeaderMap,
     State(pool): State<ConnectionPool>,
     Json(payload): Json<ParamsAccount>,
-) -> Result<Json<AuthBody>, AuthError> {
+) -> Result<impl IntoResponse, AuthError> {
     let conn = pool.get().await.map_err(|_| AuthError::InternalError)?;
     let query = conn
         .query(
@@ -255,11 +257,36 @@ pub async fn sign_in(
     let jwt_token =
         encode(&Header::default(), &claims, &KEYS.encod).map_err(|_| AuthError::TokenCreation)?;
 
-    tracing::info!("{} signin using params json success!", payload.username,);
+    tracing::info!(
+        "{} signin using path success! useragent: {:?}",
+        payload.username,
+        headers.get("User-Agent").to_owned().unwrap()
+    );
 
     // send auth token
     Ok(Json(AuthBody::new(jwt_token)))
 }
+
+//middleware
+//-----------------------------------------------------------------------------------------------------
+
+// jwt token as middleware
+pub async fn auth_middleware(req: Request, next: Next) -> Result<impl IntoResponse, AuthError> {
+    let auth_header = req.headers().get("Authorization");
+    if let Some(auth_header) = auth_header {
+        let token = auth_header.to_str().unwrap_or_default();
+        let token = token.strip_prefix("Bearer ").unwrap_or_default();
+        let token_data = decode::<Claims>(token, &KEYS.decod, &Validation::default())
+            .map_err(|_| AuthError::InvalidToken)?;
+        tracing::info!("{:?}", token_data);
+        // Pass the request to the next handler
+        Ok(next.run(req).await)
+    } else {
+        // Return an error response if the token is missing
+        Err(AuthError::MissingToken)
+    }
+}
+//-----------------------------------------------------------------------------------------------------
 
 // todo! need to grap from db
 pub async fn create_token(Json(payload): Json<AuthPayload>) -> Result<Json<AuthBody>, AuthError> {
@@ -284,23 +311,6 @@ pub async fn create_token(Json(payload): Json<AuthPayload>) -> Result<Json<AuthB
 
     // send auth token
     Ok(Json(AuthBody::new(jwt_token)))
-}
-
-// jwt token as middleware
-pub async fn auth_middleware(req: Request, next: Next) -> Result<impl IntoResponse, AuthError> {
-    let auth_header = req.headers().get("Authorization");
-    if let Some(auth_header) = auth_header {
-        let token = auth_header.to_str().unwrap_or_default();
-        let token = token.strip_prefix("Bearer ").unwrap_or_default();
-        let token_data = decode::<Claims>(token, &KEYS.decod, &Validation::default())
-            .map_err(|_| AuthError::InvalidToken)?;
-        tracing::info!("{:?}", token_data);
-        // Pass the request to the next handler
-        Ok(next.run(req).await)
-    } else {
-        // Return an error response if the token is missing
-        Err(AuthError::MissingToken)
-    }
 }
 
 pub async fn protected(claims: Claims) -> Result<impl IntoResponse, AuthError> {
