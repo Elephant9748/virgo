@@ -3,30 +3,31 @@ mod graphql;
 mod model;
 mod query;
 
-use async_graphql::{http::GraphiQLSource, EmptySubscription, Schema};
-use async_graphql_axum::{GraphQL, GraphQLSubscription};
+use async_graphql::{EmptySubscription, Schema};
+use async_graphql_axum::GraphQLSubscription;
 use axum::{
     http::Method,
     middleware,
-    response::{self, IntoResponse},
     routing::{delete, get, post},
     Router,
 };
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
-use std::{env::var, sync::LazyLock};
+use graphql::{graphqlhandler_include_headers, SchemaVirgo};
+use query::ConnectionPool;
+use std::{
+    env::var,
+    sync::{Arc, LazyLock},
+};
 use tokio_postgres::NoTls;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     auth::{auth_middleware, create_token, protected, sign_in, sign_in_using_path, Keys},
-    graphql::{MutationRoot, QueryRoot},
+    graphql::{graphqlhandler, MutationRoot, QueryRoot},
     model::Account,
-    query::{
-        delete_accounts, delete_accounts_extractor, get_accounts, get_accounts_extractor,
-        insert_accounts, insert_accounts_extractor,
-    },
+    query::{delete_accounts, get_accounts, insert_accounts},
 };
 
 // secret keys jwt
@@ -35,14 +36,11 @@ pub static KEYS: LazyLock<Keys> = LazyLock::new(|| {
     Keys::new(secret_key.as_bytes())
 });
 
-// graphql handler
-pub async fn graphqlhandler() -> impl IntoResponse {
-    response::Html(
-        GraphiQLSource::build()
-            .endpoint("/graphql")
-            .subscription_endpoint("/ws")
-            .finish(),
-    )
+// global state
+#[derive(Clone)]
+pub struct AppState {
+    pub db: ConnectionPool,
+    pub schema: SchemaVirgo,
 }
 
 #[tokio::main]
@@ -76,27 +74,18 @@ async fn main() {
         .data(pool.clone())
         .finish();
 
+    // shared_state
+    let shared_state = Arc::new(AppState {
+        db: pool.clone(),
+        schema: schema.clone(),
+    });
+
     // cors
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_origin(Any);
 
-    // build our application with some routes
-    let app = Router::new()
-        // using connection pool extractor
-        // =======================================
-        .route(
-            "/",
-            get(get_accounts_extractor)
-                .post(insert_accounts_extractor)
-                .delete(delete_accounts_extractor),
-        )
-        .route("/acc/add", post(insert_accounts))
-        .route("/acc/del", delete(delete_accounts))
-        // =======================================
-        //
-        // using connection extractor
-        // ---------------------------------------
+    let rest_router = Router::new()
         .route(
             "/accounts",
             get(get_accounts)
@@ -105,22 +94,36 @@ async fn main() {
         )
         .route("/acc/insert", post(insert_accounts))
         .route("/acc/delete", delete(delete_accounts))
-        // ---------------------------------------
         .route("/locker", get(protected))
-        .layer(middleware::from_fn(auth_middleware))
-        // using connection pool extractor
-        // =======================================
+        .layer(middleware::from_fn(auth_middleware));
+
+    let graphql_router = Router::new()
         .route("/createtoken", post(create_token))
         .route("/signin", post(sign_in))
         .route("/signin/{username}/{pass}", get(sign_in_using_path))
         // =======================================
+        // .route(
+        //     "/graphql",
+        //     get(graphqlhandler).post_service(GraphQL::new(schema.clone())),
+        // )
         .route(
             "/graphql",
-            get(graphqlhandler).post_service(GraphQL::new(schema.clone())),
+            get(graphqlhandler).post(graphqlhandler_include_headers),
         )
-        .route_service("/ws", GraphQLSubscription::new(schema))
+        // .layer(middleware::from_fn_with_state(
+        //     // shared_state.clone(),
+        //     ctx.clone(),
+        //     state_fn_as_middleware,
+        // ))
+        .route_service("/ws", GraphQLSubscription::new(schema.clone()));
+    // .layer(Extension(schema.clone()));
+
+    // build our application with some routes
+    let app = Router::new()
+        .merge(rest_router)
+        .merge(graphql_router)
         .layer(cors)
-        .with_state(pool);
+        .with_state(shared_state);
 
     // run it
     let listener = tokio::net::TcpListener::bind("127.0.0.1:7000")
