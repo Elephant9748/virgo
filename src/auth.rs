@@ -11,15 +11,14 @@ use axum_extra::{
 };
 use bcrypt::verify;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use std::fmt::Display;
+use std::{fmt::Display, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
     model::{Account, ParamsAccount},
-    query::ConnectionPool,
-    KEYS,
+    AppState, KEYS,
 };
 
 pub struct Keys {
@@ -65,6 +64,7 @@ pub enum AuthError {
     InvalidToken,
     InternalError,
     MissingToken,
+    InvalidRequestHeader,
 }
 
 impl IntoResponse for AuthError {
@@ -75,11 +75,15 @@ impl IntoResponse for AuthError {
             AuthError::TokenCreation => (StatusCode::INTERNAL_SERVER_ERROR, "Token creation error"),
             AuthError::InvalidToken => (StatusCode::BAD_REQUEST, "Invalid token"),
             AuthError::InternalError => (StatusCode::BAD_REQUEST, "Bad Request"),
-            AuthError::MissingToken => (StatusCode::BAD_REQUEST, "Misding token"),
+            AuthError::MissingToken => (StatusCode::BAD_REQUEST, "Missing Token"),
+            AuthError::InvalidRequestHeader => (
+                StatusCode::BAD_REQUEST,
+                "Missing Headers or Doesnt Have Authorization Headers!",
+            ),
         };
         let body = Json(json!({
-            "message": "Oops!",
-            "error": error_message,
+            "message": error_message,
+            "error": status.to_string(),
         }));
         (status, body).into_response()
     }
@@ -128,11 +132,15 @@ where
 // todo! set proper claims, exp
 pub async fn sign_in_using_path(
     Path((username, pass)): Path<(String, String)>,
-    State(pool): State<ConnectionPool>,
+    State(shared_state): State<Arc<AppState>>,
     req: Request,
 ) -> Result<Json<AuthBody>, AuthError> {
     tracing::debug!("req: {:?}", req);
-    let conn = pool.get().await.map_err(|_| AuthError::InternalError)?;
+    let conn = shared_state
+        .db
+        .get()
+        .await
+        .map_err(|_| AuthError::InternalError)?;
     let query = conn
         .query("select * from accounts where username = $1", &[&username])
         .await
@@ -202,10 +210,14 @@ pub async fn sign_in_using_path(
 // todo!()  set proper claims, exp
 pub async fn sign_in(
     headers: HeaderMap,
-    State(pool): State<ConnectionPool>,
+    State(shared_state): State<Arc<AppState>>,
     Json(payload): Json<ParamsAccount>,
 ) -> Result<impl IntoResponse, AuthError> {
-    let conn = pool.get().await.map_err(|_| AuthError::InternalError)?;
+    let conn = shared_state
+        .db
+        .get()
+        .await
+        .map_err(|_| AuthError::InternalError)?;
     let query = conn
         .query(
             "select * from accounts where username = $1",
@@ -270,7 +282,7 @@ pub async fn sign_in(
 //middleware
 //-----------------------------------------------------------------------------------------------------
 
-// jwt token as middleware
+// require jwt token as middleware
 pub async fn auth_middleware(req: Request, next: Next) -> Result<impl IntoResponse, AuthError> {
     let auth_header = req.headers().get("Authorization");
     if let Some(auth_header) = auth_header {
@@ -285,6 +297,30 @@ pub async fn auth_middleware(req: Request, next: Next) -> Result<impl IntoRespon
         // Return an error response if the token is missing
         Err(AuthError::MissingToken)
     }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct CtxHeaders {
+    pub ua: String,
+}
+
+#[allow(dead_code)]
+impl CtxHeaders {
+    pub fn new(uagent: String) -> Self {
+        Self { ua: uagent }
+    }
+    pub fn ua(&self) -> &str {
+        &self.ua
+    }
+}
+
+#[allow(dead_code)]
+pub async fn state_fn_as_middleware(mut req: Request, next: Next) -> Response {
+    let ctx = CtxHeaders::new("useragent".into());
+    req.extensions_mut().insert(ctx);
+    tracing::debug!("state_fn_as_middleware: {:?}", req);
+    next.run(req).await
 }
 //-----------------------------------------------------------------------------------------------------
 
