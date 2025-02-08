@@ -89,7 +89,7 @@ impl IntoResponse for AuthError {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub authorization: bool,
     pub data: String,
