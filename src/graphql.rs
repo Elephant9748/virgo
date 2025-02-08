@@ -8,10 +8,10 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::State,
     http::HeaderMap,
-    response::{self, Html, IntoResponse, Response},
+    response::{self, Html, IntoResponse},
 };
 use bcrypt::{hash, verify};
-use jsonwebtoken::{encode, Header};
+use jsonwebtoken::{decode, encode, Header, Validation};
 use uuid::Uuid;
 
 use crate::{
@@ -34,11 +34,30 @@ impl Account {
     }
 }
 
+#[Object]
+impl Claims {
+    async fn authorization(&self) -> &bool {
+        &self.authorization
+    }
+    async fn data(&self) -> &str {
+        &self.data
+    }
+    async fn exp(&self) -> &usize {
+        &self.exp
+    }
+}
+
 pub struct QueryRoot;
 
 #[Object]
 impl QueryRoot {
     async fn accounts(&self, ctx: &Context<'_>) -> Result<Vec<Account>, Error> {
+        // check token
+        let check = check_auth(ctx);
+        if check.is_err() {
+            return Err(Error::new("Mission Authorization Headers!"));
+        }
+
         let conn = ctx.data_unchecked::<ConnectionPool>();
         let db = conn.get().await.unwrap();
         let row = db.query("select * from accounts", &[]).await.unwrap();
@@ -46,22 +65,19 @@ impl QueryRoot {
         if graphql_data.is_empty() {
             return Err(Error::new("graphql_data empty maybe db connections error!"));
         }
-        tracing::info!(
-            "get accounts graphql - {:?}",
-            ctx.data::<ReqHeaders>().unwrap().ua()
-        );
         Ok(graphql_data)
     }
-    async fn greet(&self, ctx: &Context<'_>) -> Result<String, Error> {
-        tracing::info!(
-            "get accounts graphql - {:?}",
-            ctx.data::<ReqHeaders>().unwrap().ua()
-        );
-        Ok(ctx
-            .data::<ReqHeaders>()
-            .unwrap()
-            .authorization()
-            .to_string())
+    async fn greet(&self, ctx: &Context<'_>) -> Result<Claims, Error> {
+        if let Ok(headers) = ctx.data::<ReqHeaders>() {
+            let token = get_token(headers)?;
+            tracing::info!("token - {}", token);
+            let decode_token =
+                decode::<Claims>(token.as_str(), &KEYS.decod, &Validation::default());
+            tracing::info!("decod token - {:?}", decode_token);
+            Ok(decode_token.unwrap().claims)
+        } else {
+            return Err(Error::new("Missing Authorization Headers!"));
+        }
     }
 }
 
@@ -75,8 +91,6 @@ impl MutationRoot {
         username: String,
         pass: String,
     ) -> Result<String, Error> {
-        let head = ctx.http_header_contains("Authorization");
-        tracing::debug!("{:?}", head);
         let conn = ctx.data_unchecked::<ConnectionPool>();
         let db = conn.get().await.unwrap();
         let row = db
@@ -117,6 +131,12 @@ impl MutationRoot {
         username: String,
         pass: String,
     ) -> Result<Vec<Account>, Error> {
+        // check token
+        let check = check_auth(ctx);
+        if check.is_err() {
+            return Err(Error::new("Mission Authorization Headers!"));
+        }
+
         let conn = ctx.data_unchecked::<ConnectionPool>();
         let db = conn.get().await.unwrap();
 
@@ -174,6 +194,7 @@ pub async fn graphqlhandler() -> impl IntoResponse {
         GraphiQLSource::build()
             .endpoint("/graphql")
             .subscription_endpoint("/ws")
+            .header("Authorization", "")
             .finish(),
     )
 }
@@ -183,7 +204,7 @@ pub async fn graphqlhandler_include_headers(
     State(shared_state): State<Arc<AppState>>,
     headers: HeaderMap,
     req: GraphQLRequest,
-) -> Result<Response, AuthError> {
+) -> Result<GraphQLResponse, AuthError> {
     let get_headers = get_headers_to_graphql(&headers);
     if get_headers.is_none() {
         return Err(AuthError::InvalidRequestHeader);
@@ -194,12 +215,14 @@ pub async fn graphqlhandler_include_headers(
         .execute(req.into_inner().data(get_headers.unwrap()))
         .await;
 
-    tracing::debug!(
-        "graphqlhandler_include_headers: {:?}",
-        get_headers_to_graphql(&headers)
-    );
+    // tracing::debug!(
+    //     "graphqlhandler_include_headers: {:?}",
+    //     get_headers_to_graphql(&headers)
+    // );
 
-    let response = GraphQLResponse::from(resp_gql).into_response();
+    // let response = GraphQLResponse::from(resp_gql).into_response();
+    // Ok(response)
+    let response = GraphQLResponse::from(resp_gql);
     Ok(response)
 }
 
@@ -244,4 +267,26 @@ pub fn get_headers_to_graphql(headers: &HeaderMap) -> Option<ReqHeaders> {
         ua: format!("{:?}", ua.unwrap()).to_string(),
         authorization: format!("{:?}", authorization.unwrap()).to_string(),
     })
+}
+
+fn get_token(headers: &ReqHeaders) -> Result<String, Error> {
+    let auth = headers.authorization().replace("\"", "");
+    let token: Vec<&str> = auth.split(" ").collect();
+    let bearer = token.iter().find(|&x| *x == "Bearer");
+    if bearer.is_none() {
+        return Err(Error::new("Missing Authorization Token!"));
+    }
+    Ok(token[1].to_string())
+}
+
+fn check_auth(ctx: &Context<'_>) -> Result<bool, Error> {
+    if let Ok(headers) = ctx.data::<ReqHeaders>() {
+        let token = get_token(headers)?;
+        tracing::info!("token - {}", token);
+        let decode_token = decode::<Claims>(token.as_str(), &KEYS.decod, &Validation::default());
+        tracing::info!("decod token - {:?}", decode_token);
+        Ok(true)
+    } else {
+        return Err(Error::new("Missing Authorization Headers!"));
+    }
 }
