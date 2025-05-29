@@ -32,6 +32,13 @@ impl Account {
     async fn pass(&self) -> &str {
         &self.pass
     }
+    async fn claims(&self) -> Claims {
+        Claims {
+            authorization: true,
+            data: "data".into(),
+            exp: 100,
+        }
+    }
 }
 
 #[Object]
